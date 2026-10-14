@@ -1,0 +1,1 @@
+"""Jeti Nur advertising bot."""

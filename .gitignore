@@ -1,0 +1,21 @@
+.env
+.env.*
+!.env.example
+.venv/
+.runtime/
+venv/
+__pycache__/
+*.py[cod]
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.DS_Store
+.pytest_cache/
+.ruff_cache/
+
+# Deployment archives may contain server secrets; publish source files instead.
+deploy.zip

@@ -1,0 +1,9 @@
+# Install wheels only, including transitive dependencies; no compilation on hosting.
+--only-binary=:all:
+
+aiogram==3.31.0
+aiosqlite==0.22.1
+python-dotenv==1.2.4
+tzdata==2026.5
+matplotlib==3.10.8
+python-docx==1.2.0

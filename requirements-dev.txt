@@ -1,0 +1,2 @@
+# Tests use the standard-library unittest module; no extra dev packages are needed.
+-r requirements.txt
