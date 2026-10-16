@@ -41,6 +41,7 @@ class ExportTests(BotTestCase):
 
     async def order(self, name="Машина", price=200, when=NOW, author=101):
         order_id = await self.database.add_order(
+            description="Fixture description",
             product_id=self.product_id, product_name=name, price=price, created_by=author,
             created_by_name=f"Author {author}", receipt_file_id="PRIVATE_RECEIPT_ID",
             receipt_file_unique_id="PRIVATE_UNIQUE_ID", receipt_type="document", receipt_file_name="PRIVATE_RECEIPT.pdf",
@@ -86,7 +87,7 @@ class ExportTests(BotTestCase):
         totals, top, orders = document.tables
         self.assertEqual([cell.text for cell in top.rows[1].cells], ["1", "Машина", "2", "400 сом"])
         self.assertEqual(len(orders.rows), 5)
-        self.assertEqual([cell.text for cell in orders.rows[1].cells], ["1", "12:00 · 13.10.2026", "Үй", "300 сом", "Author 101"])
+        self.assertEqual([cell.text for cell in orders.rows[1].cells], ["1", "12:00 · 13.10.2026", "Үй", "300 сом", "Fixture description", "Author 101"])
         self.assertEqual(len(document.inline_shapes), 1)
         self.assertNotIn("New catalog name", text)
         with ZipFile(BytesIO(data)) as archive:
@@ -137,7 +138,7 @@ class ExportTests(BotTestCase):
         _, _, document = await self.export()
         self.assertEqual(len(document.tables[2].rows), 107)
         self.assertEqual(document.tables[2].rows[-2].cells[0].text, "105")
-        self.assertEqual(len(document.tables[1].rows), 6)
+        self.assertEqual(len(document.tables[1].rows), 8)
         self.assertIn("Количество заказов\n105", document_text(document))
 
     async def test_report_sections_use_same_snapshot_during_concurrent_delete(self) -> None:

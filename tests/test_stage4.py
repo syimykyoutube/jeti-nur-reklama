@@ -90,6 +90,7 @@ class AnalyticsTests(BotTestCase):
 
     async def order(self, name="Машина", price=200, when=NOW, author=101, kind="photo") -> int:
         order_id = await self.database.add_order(
+            description="Fixture description",
             product_id=self.product_id, product_name=name, price=price,
             created_by=author, created_by_name=f"User {author}",
             receipt_file_id=f"receipt-{kind}", receipt_file_unique_id="unique", receipt_type=kind,
@@ -168,14 +169,14 @@ class AnalyticsTests(BotTestCase):
         self.assertEqual(self.session.calls[-1].text, t("order_unavailable", "ru"))
         self.assertFalse(any(isinstance(call, (SendPhoto, SendDocument)) for call in self.session.calls))
 
-    async def test_top_five_count_then_sum_and_snapshot_names(self) -> None:
+    async def test_top_all_products_count_then_sum_and_snapshot_names(self) -> None:
         for name, prices in (("Машина", [200, 200, 200]), ("Үй", [500, 500]), ("Авто", [300, 300]), ("A", [50]), ("B", [40]), ("C", [30])):
             for price in prices:
                 await self.order(name=name, price=price)
         await self.database.update_product_name(self.product_id, "Renamed")
         await self.database.soft_delete_product(self.product_id)
         top = await self.database.get_top_products(make_period("all", TZ, NOW))
-        self.assertEqual([item.name for item in top], ["Машина", "Үй", "Авто", "A", "B"])
+        self.assertEqual([item.name for item in top], ["Машина", "Үй", "Авто", "A", "B", "C"])
         await self.result("top")
         self.assertIn("1. Машина: 3 раз, 600 сом", self.sent_messages()[-1].text)
         self.assertIn("5. B: 1 раз, 40 сом", self.sent_messages()[-1].text)
@@ -235,7 +236,7 @@ class AnalyticsTests(BotTestCase):
         await self.result("orders", "7")
         self.assertEqual(self.list_order_ids(), ids[::-1][:10])
         self.assertNotIn(old, self.list_order_ids())
-        self.assertEqual(self.sent_messages()[0].text, "<b>1. Машина — 200 сом</b>\n<i>12:00 · 13.10.2026 · User 101</i>")
+        self.assertEqual(self.sent_messages()[0].text, "<b>1. Машина — 200 сом</b>\nFixture description\n<i>12:00 · 13.10.2026 · User 101</i>")
         navigation = self.sent_messages()[-1].reply_markup.inline_keyboard[0][0]
         payload = AnalyticsPeriodCallback.unpack(navigation.callback_data)
         self.assertEqual((payload.period, payload.anchor, payload.page), ("d7", make_period("7", TZ, NOW).anchor, 1))

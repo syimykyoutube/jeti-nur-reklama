@@ -113,7 +113,7 @@ class CatalogEditTests(BotTestCase):
 
     async def test_edit_command_is_not_deleted_or_consumed_by_fsm(self):
         before = await self.database.list_active_products()
-        for step in (*CatalogStates.__all_states__, OrderStates.awaiting_receipt, OrderStates.delete_confirm, AnalyticsStates.custom_days):
+        for step in (*CatalogStates.__all_states__, OrderStates.awaiting_receipt, OrderStates.awaiting_description, OrderStates.delete_confirm, AnalyticsStates.custom_days):
             await self.context().set_state(step)
             await self.context().set_data({"token": "old", "product_id": self.product_id})
             self.session.calls.clear()
@@ -147,7 +147,7 @@ class CatalogEditTests(BotTestCase):
             await self.click(ProductCallback(action="select", product_id=self.product_id).pack())
             self.session.calls.clear()
             if save:
-                await self.send_message(None, photo=PHOTOS)
+                await self.send_message(None, photo=PHOTOS, caption="Fixture description")
             else:
                 await self.click("order:cancel")
             self.assertFalse(any(message.text == t("catalog_edit_mode", "ru") for message in self.sent_messages()))

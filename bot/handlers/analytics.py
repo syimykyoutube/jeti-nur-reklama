@@ -18,7 +18,7 @@ from bot.config import Config
 from bot.db import Database
 from bot.handlers.catalog import usable_callback
 from bot.handlers.start import show_language_picker
-from bot.handlers.orders import order_card
+from bot.handlers.orders import order_card, receipt_caption
 from bot.handlers.export import send_word_report
 from bot.i18n import format_money, t, variants
 from bot.keyboards import (
@@ -147,7 +147,17 @@ async def show_result(callback: CallbackQuery, callback_data: AnalyticsPeriodCal
             return
         lines = [t("top_line", lang, rank=index, name=escape(item.name), count=item.count,
                    total=format_money(item.total, lang)) for index, item in enumerate(top, 1)]
-        await message.answer("\n".join(lines), reply_markup=navigation)
+        chunk = []
+        length = 0
+        for line in lines:
+            # Split between whole escaped lines, never inside HTML entities.
+            line_length = len(line.encode("utf-16-le")) // 2
+            if chunk and length + 1 + line_length > 4000:
+                await message.answer("\n".join(chunk))
+                chunk, length = [], 0
+            length += line_length + bool(chunk)
+            chunk.append(line)
+        await message.answer("\n".join(chunk), reply_markup=navigation)
         return
     summary = await database.get_order_summary(period)
     if not summary.count:
@@ -176,7 +186,7 @@ async def orders_page_callback(callback: CallbackQuery, callback_data: Analytics
 
 
 async def send_receipt(callback: CallbackQuery, callback_data: ReceiptCallback, database: Database,
-                       lang: str, language_selected: bool) -> None:
+                       config: Config, lang: str, language_selected: bool) -> None:
     if not await usable_callback(callback, lang, language_selected):
         return
     order = await database.get_active_order(callback_data.order_id)
@@ -187,11 +197,12 @@ async def send_receipt(callback: CallbackQuery, callback_data: ReceiptCallback, 
         await callback.answer(t("receipt_unavailable", lang), show_alert=True)
         return
     await callback.answer()
+    caption = receipt_caption(order, config, lang)
     try:
         if order.receipt_type == "photo":
-            await callback.message.answer_photo(order.receipt_file_id)
+            await callback.message.answer_photo(order.receipt_file_id, caption=caption)
         else:
-            await callback.message.answer_document(order.receipt_file_id)
+            await callback.message.answer_document(order.receipt_file_id, caption=caption)
     except TelegramBadRequest:
         logger.exception("Telegram receipt delivery failed for order_id=%s", order.id)
         await callback.message.answer(t("receipt_unavailable", lang))

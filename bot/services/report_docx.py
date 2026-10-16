@@ -9,6 +9,7 @@ import sqlite3
 from zoneinfo import ZoneInfo
 
 from docx import Document
+from docx.enum.section import WD_ORIENT, WD_SECTION_START
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
@@ -226,24 +227,33 @@ def write_report(snapshot_path: Path, output: Path, period: Period, tz: ZoneInfo
         document.inline_shapes[-1]._inline.docPr.set("descr", t("report_chart", lang))
         paragraph(document, t("report_chart", lang), style="Caption", center=True, size=10)
 
+    widths = [1, 3.2, 4, 2.2, 4, 2.6]
+    section = document.sections[-1]
+    available = section.page_width - section.left_margin - section.right_margin
+    if Cm(sum(widths)) > available:
+        section = document.add_section(WD_SECTION_START.NEW_PAGE)
+        section.orientation = WD_ORIENT.LANDSCAPE
+        section.page_width, section.page_height = Cm(29.7), Cm(21)
     paragraph(document, t("report_orders", lang), style="Heading 1", size=14, bold=True)
-    widths = [1.2, 4.5, 4.8, 3, 3.5]
     table = make_table(document, [t(key, lang) for key in (
-        "report_number", "report_date_column", "report_order_product", "report_amount", "report_author")], widths)
+        "report_number", "report_date_column", "report_order_product", "report_amount",
+        "report_description", "report_author")], widths)
     scope, values = order_scope(period.start, period.end)
     # Only display columns, read in batches from the same consistent snapshot.
     with closing(sqlite3.connect(snapshot_path.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
         cursor = connection.execute(
-            f"SELECT product_name, price, created_by_name, created_by, created_at FROM orders WHERE {scope} "
+            f"SELECT product_name, price, created_by_name, created_by, created_at, description FROM orders WHERE {scope} "
             "ORDER BY created_at DESC, id DESC", values)
         index = 0
         while rows := cursor.fetchmany(100):
-            for name, price, author, author_id, created_at in rows:
+            for name, price, author, author_id, created_at, description in rows:
                 index += 1
                 fill_row(table.add_row(), [str(index), format_datetime(datetime.fromisoformat(created_at), lang, tz),
-                                         name, format_money(price, lang), author or str(author_id)], widths,
+                                         name, format_money(price, lang),
+                                         (description or "").strip() or t("report_description_empty", lang),
+                                         author or str(author_id)], widths,
                          alignments=[WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.LEFT,
-                                     WD_ALIGN_PARAGRAPH.RIGHT, WD_ALIGN_PARAGRAPH.LEFT],
+                                     WD_ALIGN_PARAGRAPH.RIGHT, WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.LEFT],
                          fill="FFFFFF" if index % 2 else "F5F7FA")
     last_row = table.add_row()
     merged = last_row.cells[0].merge(last_row.cells[-1])

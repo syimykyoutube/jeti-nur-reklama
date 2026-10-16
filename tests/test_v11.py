@@ -50,7 +50,7 @@ class UIv11Tests(BotTestCase):
     async def order(self, name="Машина", author="Aibek"):
         with patch("bot.db.datetime") as clock:
             clock.now.return_value = NOW
-            return await self.database.add_order(product_id=self.product_id, product_name=name, price=200,
+            return await self.database.add_order(description="Fixture description", product_id=self.product_id, product_name=name, price=200,
                 created_by=101, created_by_name=author, receipt_file_id="file", receipt_file_unique_id="unique", receipt_type="photo")
 
     async def test_main_keyboard_two_vertical_buttons_and_no_repeated_headers(self):
@@ -114,9 +114,9 @@ class UIv11Tests(BotTestCase):
         await self.send_message("200")
         self.assertEqual(self.deleted(), [])
         await self.click(ProductCallback(action="select", product_id=self.product_id).pack())
-        await self.send_message(None, photo=PHOTO)
+        await self.send_message(None, photo=PHOTO, caption="Fixture description")
         await self.click(ProductCallback(action="select", product_id=self.product_id).pack())
-        await self.send_message(None, document=RECEIPT)
+        await self.send_message(None, document=RECEIPT, caption="Fixture description")
         self.assertEqual(self.deleted(), [])
         self.assertEqual((await self.database.get_orders_page()).total, 2)
 
@@ -280,7 +280,7 @@ class UIv11Tests(BotTestCase):
         self.assertNotIn("Asia/Bishkek", "\n".join(p.text for p in document.paragraphs))
         self.assertEqual(len(document.tables), 3)
         self.assertEqual([round(column.width / Cm(1), 1) for column in document.tables[1].columns], [1.2, 9.8, 2.5, 3.5])
-        self.assertEqual([round(column.width / Cm(1), 1) for column in document.tables[2].columns], [1.2, 4.5, 4.8, 3.0, 3.5])
+        self.assertEqual([round(column.width / Cm(1), 1) for column in document.tables[2].columns], [1.0, 3.2, 4.0, 2.2, 4.0, 2.6])
         self.assertEqual(document.tables[2].rows[-1].cells[0].text, "Жалпы: 400 сом")
         ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "a": "http://schemas.openxmlformats.org/drawingml/2006/main", "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
         with ZipFile(path) as archive:

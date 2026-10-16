@@ -47,6 +47,7 @@ class OrderTests(BotTestCase):
         with patch("bot.db.datetime") as clock:
             clock.now.return_value = NOW
             return await self.database.add_order(
+                description="Fixture description",
                 product_id=self.product_id, product_name=name, price=price,
                 created_by=created_by, created_by_name=f"User {created_by}",
                 receipt_file_id="fixture", receipt_file_unique_id="fixture-unique", receipt_type="photo",
@@ -77,7 +78,7 @@ class OrderTests(BotTestCase):
 
     async def test_select_then_photo_records_metadata_and_returns_catalog(self) -> None:
         await self.select()
-        self.assertEqual(self.sent_messages()[-1].text, "Машина — 200 сом. Отправьте чек.")
+        self.assertEqual(self.sent_messages()[-1].text, t("ask_receipt", "ru", name="Машина", price="200 сом"))
         self.assertEqual(self.sent_messages()[-1].reply_markup.inline_keyboard[0][0].text, "❌ Назад")
         self.assertEqual(await self.all_rows(), [])
         await self.send_message(None, photo=PHOTOS, caption="Payment")
@@ -97,9 +98,9 @@ class OrderTests(BotTestCase):
 
     async def test_document_and_kyrgyz_prompts(self) -> None:
         await self.select(202)
-        self.assertEqual(self.sent_messages()[-1].text, "Машина — 200 сом. Чекти жөнөт.")
+        self.assertEqual(self.sent_messages()[-1].text, t("ask_receipt", "ky", name="Машина", price="200 сом"))
         self.assertEqual(self.sent_messages()[-1].reply_markup.inline_keyboard[0][0].text, "❌ Артка")
-        await self.send_message(None, 202, document=DOCUMENT)
+        await self.send_message(None, 202, document=DOCUMENT, caption="Fixture description")
         row = (await self.all_rows())[0]
         self.assertEqual((row["receipt_type"], row["receipt_file_id"], row["receipt_file_unique_id"], row["receipt_file_name"]), ("document", "pdf", "pdf-unique", "receipt.pdf"))
         self.assertEqual(row["created_by"], 202)
@@ -107,7 +108,7 @@ class OrderTests(BotTestCase):
 
     async def test_document_without_filename_is_accepted(self) -> None:
         await self.select()
-        await self.send_message(None, document=Document(file_id="file", file_unique_id="unique"))
+        await self.send_message(None, document=Document(file_id="file", file_unique_id="unique"), caption="Fixture description")
         self.assertIsNone((await self.all_rows())[0]["receipt_file_name"])
 
     async def test_other_types_remind_without_changing_state_or_saving(self) -> None:
@@ -127,11 +128,11 @@ class OrderTests(BotTestCase):
             self.assertEqual(await self.all_rows(), [])
 
     async def test_back_cancel_and_navigation_discard_without_order(self) -> None:
-        for text in (t("btn_back", "ru"), t("btn_back", "ky"), "/cancel", t("btn_cancel", "ru"), "/start", "/menu", "/language", t("menu_catalog", "ru"), t("menu_analytics", "ru")):
+        for text in (t("btn_back", "ru"), t("btn_back", "ky"), "/cancel", t("btn_cancel", "ru"), "/menu", "/language", t("menu_catalog", "ru"), t("menu_analytics", "ru")):
             await self.select()
             await self.send_message(text)
             self.assertIsNone(await self.context().get_state())
-            await self.send_message(None, photo=PHOTOS)
+            await self.send_message(None, photo=PHOTOS, caption="Fixture description")
             self.assertEqual(await self.all_rows(), [])
         await self.select()
         await self.click("order:cancel")
@@ -142,7 +143,7 @@ class OrderTests(BotTestCase):
         await self.database.update_product_name(self.product_id, "Авто")
         await self.database.update_product_price(self.product_id, 500)
         await self.database.soft_delete_product(self.product_id)
-        await self.send_message(None, document=DOCUMENT)
+        await self.send_message(None, document=DOCUMENT, caption="Fixture description")
         row = (await self.all_rows())[0]
         self.assertEqual((row["product_name"], row["price"]), ("Машина", 200))
         self.assertIsNotNone(await self.database.get_active_order(row["id"]))
@@ -152,16 +153,16 @@ class OrderTests(BotTestCase):
         other_id = await self.database.add_product("Үй", 300)
         await self.select()
         await self.select(product_id=other_id)
-        await self.send_message(None, photo=PHOTOS)
+        await self.send_message(None, photo=PHOTOS, caption="Fixture description")
         self.assertEqual([(r["product_name"], r["price"]) for r in await self.all_rows()], [("Үй", 300)])
 
     async def test_two_users_receipts_and_rapid_duplicate_delivery(self) -> None:
         await self.select(101)
         await self.select(202)
-        await asyncio.gather(self.send_message(None, 101, photo=PHOTOS), self.send_message(None, 101, photo=PHOTOS))
+        await asyncio.gather(self.send_message(None, 101, photo=PHOTOS, caption="Fixture description"), self.send_message(None, 101, photo=PHOTOS, caption="Fixture description"))
         self.assertEqual(len(await self.all_rows()), 1)
         self.assertEqual(await self.context(202).get_state(), OrderStates.awaiting_receipt.state)
-        await self.send_message(None, 202, document=DOCUMENT)
+        await self.send_message(None, 202, document=DOCUMENT, caption="Fixture description")
         self.assertEqual([r["created_by"] for r in await self.all_rows()], [101, 202])
 
     async def test_analytics_opens_five_sections(self) -> None:
@@ -313,7 +314,7 @@ class OrderTests(BotTestCase):
         await self.select()
         await self.dispatcher.fsm.close()
         self.dispatcher = create_dispatcher(self.config, self.database)
-        await self.send_message(None, photo=PHOTOS)
+        await self.send_message(None, photo=PHOTOS, caption="Fixture description")
         self.assertEqual(len(await self.all_rows()), 1)
         await self.choose_order(saved_id)
         token = (await self.context().get_data())["token"]
@@ -331,8 +332,8 @@ class OrderTests(BotTestCase):
         token = (await self.context().get_data())["token"]
         self.session.calls.clear()
         await self.select(user_id=999)
-        await self.send_message(None, 999, photo=PHOTOS)
-        await self.send_message(None, 999, document=DOCUMENT)
+        await self.send_message(None, 999, photo=PHOTOS, caption="Fixture description")
+        await self.send_message(None, 999, document=DOCUMENT, caption="Fixture description")
         await self.send_message(t("menu_delete_order", "ru"), 999)
         self.session.calls.clear()
         await self.click(OrderPageCallback(page=0).pack(), 999)
@@ -361,7 +362,7 @@ class OrderTests(BotTestCase):
         utc = datetime(2026, 10, 12, 19, 0, tzinfo=timezone.utc)
         with patch("bot.db.datetime") as clock:
             clock.now.return_value = utc
-            await self.send_message(None, document=DOCUMENT)
+            await self.send_message(None, document=DOCUMENT, caption="Fixture description")
         self.assertEqual((await self.all_rows())[0]["created_at"], utc.isoformat(timespec="microseconds"))
         await self.send_message("/deleteorder")
         self.assertIn("01:00 · 13.10.2026", self.order_buttons()[0][1])
@@ -370,6 +371,7 @@ class OrderTests(BotTestCase):
         for receipt_type, receipt_id in (("text", "file"), ("photo", "")):
             with self.assertRaises(ValueError):
                 await self.database.add_order(
+                    description="Fixture description",
                     product_id=self.product_id, product_name="Машина", price=200,
                     created_by=101, created_by_name="Aibek", receipt_file_id=receipt_id,
                     receipt_file_unique_id=None, receipt_type=receipt_type,

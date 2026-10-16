@@ -24,6 +24,13 @@ async def my_id(message: Message, lang: str) -> None:
 
 
 async def start(message: Message, lang: str, language_selected: bool, state: FSMContext) -> None:
+    from bot.handlers.orders import OrderStates
+    current = await state.get_state()
+    command = (message.text or "").split(maxsplit=1)[0].split("@")[0]
+    if command == "/start" and current in {OrderStates.awaiting_receipt.state, OrderStates.awaiting_description.state}:
+        key = "receipt_wrong" if current == OrderStates.awaiting_receipt.state else "ask_description"
+        await message.answer(t(key, lang), reply_markup=receipt_keyboard(lang))
+        return
     await state.clear()
     if language_selected:
         await show_main_menu(message, lang)
@@ -56,9 +63,12 @@ async def delete_unexpected_message(message: Message) -> None:
 
 
 async def unknown_message(message: Message, state: FSMContext, lang: str) -> None:
-    await delete_unexpected_message(message)
     # Invalid receipt types keep the existing reminder and never consume the draft.
     from bot.handlers.orders import OrderStates
+    if await state.get_state() == OrderStates.awaiting_description.state:
+        await message.answer(t("description_wrong", lang), reply_markup=receipt_keyboard(lang))
+        return
+    await delete_unexpected_message(message)
     if await state.get_state() == OrderStates.awaiting_receipt.state:
         await message.answer(t("receipt_wrong", lang), reply_markup=receipt_keyboard(lang))
 

@@ -9,6 +9,7 @@ import aiosqlite
 
 from bot.i18n import SUPPORTED_LANGUAGES
 from bot.services.catalog import validate_name, validate_price_amount
+from bot.services.orders import validate_description
 from bot.services.stats import ChartBucket, Period, Summary, TopProduct, bucket_date
 
 
@@ -57,6 +58,7 @@ class Order:
     receipt_file_name: str | None
     deleted_at: str | None
     deleted_by: int | None
+    description: str | None = None
 
     @classmethod
     def from_row(cls, row: aiosqlite.Row) -> "Order":
@@ -105,7 +107,8 @@ CREATE TABLE IF NOT EXISTS orders (
     receipt_type TEXT NOT NULL,
     receipt_file_name TEXT,
     deleted_at TEXT,
-    deleted_by INTEGER
+    deleted_by INTEGER,
+    description TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
@@ -118,6 +121,12 @@ async def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(db_path, timeout=10) as connection:
         await connection.executescript(SCHEMA)
+        # Serialize inspection and ALTER so concurrent initializations are safe too.
+        await connection.execute("BEGIN IMMEDIATE")
+        async with connection.execute("PRAGMA table_info(orders)") as cursor:
+            columns = {row[1] for row in await cursor.fetchall()}
+        if "description" not in columns:
+            await connection.execute("ALTER TABLE orders ADD COLUMN description TEXT")
         await connection.commit()
 
 
@@ -213,24 +222,26 @@ class Database:
         created_by: int, created_by_name: str, receipt_file_id: str,
         receipt_file_unique_id: str | None, receipt_type: str,
         receipt_file_name: str | None = None,
+        description: str | None = None,
     ) -> int:
-        """Save the quoted snapshot only once a receipt has arrived."""
+        """Save a quoted snapshot only with both a receipt and a description."""
         if receipt_type not in {"photo", "document"} or not receipt_file_id:
             raise ValueError("A photo or document receipt is required")
         product_name = validate_name(product_name)
         price = validate_price_amount(price)
+        description = validate_description(description)
         created_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
         async with aiosqlite.connect(self.path, timeout=10) as connection:
             async with connection.execute(
                 """
                 INSERT INTO orders (
                     product_id, product_name, price, created_by, created_by_name, created_at,
-                    receipt_file_id, receipt_file_unique_id, receipt_type, receipt_file_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    receipt_file_id, receipt_file_unique_id, receipt_type, receipt_file_name, description
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (product_id, product_name, price, created_by, created_by_name, created_at,
                  receipt_file_id, receipt_file_unique_id, receipt_type,
-                 receipt_file_name if receipt_type == "document" else None),
+                 receipt_file_name if receipt_type == "document" else None, description),
             ) as cursor:
                 order_id = cursor.lastrowid
             await connection.commit()
@@ -282,7 +293,7 @@ class Database:
             async with connection.execute(
                 "SELECT product_name, COUNT(*) AS quantity, SUM(price) AS total "
                 f"FROM orders WHERE {scope} GROUP BY product_name "
-                "ORDER BY quantity DESC, total DESC, product_name ASC LIMIT 5", values,
+                "ORDER BY quantity DESC, total DESC, product_name ASC", values,
             ) as cursor:
                 return [TopProduct(*row) for row in await cursor.fetchall()]
 

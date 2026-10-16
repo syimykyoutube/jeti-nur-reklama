@@ -1,7 +1,7 @@
 """Receipt-backed orders and paginated, confirmed soft deletion."""
 
 from datetime import datetime
-from html import escape
+from html import escape, unescape
 from uuid import uuid4
 
 from aiogram import F, Router
@@ -19,6 +19,7 @@ from bot.db import Database, Order
 from bot.handlers.catalog import open_catalog, show_catalog, usable_callback
 from bot.handlers.start import show_language_picker, delete_unexpected_message
 from bot.i18n import format_datetime, format_money, t, variants
+from bot.services.orders import validate_description
 from bot.keyboards import (
     confirm_order_keyboard, delete_orders_keyboard, delete_order_button, main_menu_keyboard, receipt_keyboard,
 )
@@ -26,15 +27,37 @@ from bot.keyboards import (
 
 class OrderStates(StatesGroup):
     awaiting_receipt = State()
+    awaiting_description = State()
     delete_choice = State()
     delete_confirm = State()
 
 
 def order_card(order: Order, number: int, config: Config, lang: str) -> str:
+    description = (order.description or "").strip()
+    if len(description) > 300:
+        description = description[:299] + "…"
     return t("order_card", lang, number=number, name=escape(order.product_name),
              price=format_money(order.price, lang),
+             description=escape(description) + "\n" if description else "",
              date=format_datetime(datetime.fromisoformat(order.created_at), lang, config.timezone),
              author=escape(order.created_by_name or str(order.created_by)))
+
+
+def receipt_caption(order: Order, config: Config, lang: str) -> str:
+    """Fit escaped HTML into Telegram's caption limit without splitting entities/tags."""
+    values = dict(name=escape(order.product_name), price=format_money(order.price, lang),
+                  date=format_datetime(datetime.fromisoformat(order.created_at), lang, config.timezone),
+                  author=escape(order.created_by_name or str(order.created_by)))
+    description = (order.description or "").strip()
+    for length in range(len(description), -1, -1):
+        clipped = description if length == len(description) else (description[:length - 1] + "…" if length else "")
+        caption = t("receipt_caption", lang, **values,
+                    description=escape(clipped) + "\n" if clipped else "")
+        # Telegram counts decoded text; retaining our tags in this count leaves headroom.
+        if len(unescape(caption).encode("utf-16-le")) // 2 <= 1024:
+            return caption
+    # Product names and Telegram user names fit alone; guard corrupted legacy metadata.
+    raise ValueError("Order metadata exceeds the Telegram caption limit")
 
 
 async def select_product(
@@ -71,12 +94,37 @@ async def receive_receipt(message: Message, database: Database, state: FSMContex
         await delete_unexpected_message(message)
         await message.answer(t("receipt_wrong", lang), reply_markup=receipt_keyboard(lang))
         return
+    await state.update_data(receipt_file_id=receipt.file_id, receipt_file_unique_id=receipt.file_unique_id,
+                            receipt_type=receipt_type, receipt_file_name=file_name)
+    try:
+        description = validate_description(message.caption)
+    except ValueError:
+        await state.set_state(OrderStates.awaiting_description)
+        await message.answer(t("ask_description", lang), reply_markup=receipt_keyboard(lang))
+        return
+    await save_order(message, database, state, lang, description)
+
+
+async def receive_description(message: Message, database: Database, state: FSMContext, lang: str) -> None:
+    if message.content_type in {ContentType.PHOTO, ContentType.DOCUMENT}:
+        await receive_receipt(message, database, state, lang)
+        return
+    try:
+        # Commands are navigation, never order descriptions.
+        description = validate_description(message.text if message.text and not message.text.startswith("/") else None)
+    except ValueError:
+        await message.answer(t("description_wrong", lang), reply_markup=receipt_keyboard(lang))
+        return
+    await save_order(message, database, state, lang, description)
+
+
+async def save_order(message: Message, database: Database, state: FSMContext, lang: str, description: str) -> None:
     data = await state.get_data()
     await database.add_order(
         product_id=data["product_id"], product_name=data["product_name"], price=data["price"],
         created_by=message.from_user.id, created_by_name=message.from_user.full_name,
-        receipt_file_id=receipt.file_id, receipt_file_unique_id=receipt.file_unique_id,
-        receipt_type=receipt_type, receipt_file_name=file_name,
+        receipt_file_id=data["receipt_file_id"], receipt_file_unique_id=data["receipt_file_unique_id"],
+        receipt_type=data["receipt_type"], receipt_file_name=data["receipt_file_name"], description=description,
     )
     await state.clear()
     await message.answer(t("order_saved", lang), reply_markup=main_menu_keyboard(lang))
@@ -174,7 +222,9 @@ async def confirm_delete_order(
 
 
 async def cancel_order(message: Message, database: Database, state: FSMContext, lang: str) -> None:
-    waiting_for_receipt = await state.get_state() == OrderStates.awaiting_receipt.state
+    waiting_for_receipt = await state.get_state() in {
+        OrderStates.awaiting_receipt.state, OrderStates.awaiting_description.state,
+    }
     await state.clear()
     await message.answer(t("cancelled", lang), reply_markup=main_menu_keyboard(lang))
     if waiting_for_receipt:
@@ -185,7 +235,7 @@ async def cancel_receipt_callback(callback: CallbackQuery, database: Database, s
                                   lang: str, language_selected: bool) -> None:
     if not await usable_callback(callback, lang, language_selected):
         return
-    if await state.get_state() != OrderStates.awaiting_receipt.state:
+    if await state.get_state() not in {OrderStates.awaiting_receipt.state, OrderStates.awaiting_description.state}:
         await callback.answer(t("order_dialog_expired", lang), show_alert=True)
         return
     await callback.answer()
@@ -194,12 +244,14 @@ async def cancel_receipt_callback(callback: CallbackQuery, database: Database, s
 
 def create_router() -> Router:
     router = Router(name="orders")
-    states = StateFilter(OrderStates.awaiting_receipt, OrderStates.delete_choice, OrderStates.delete_confirm)
+    waiting = StateFilter(OrderStates.awaiting_receipt, OrderStates.awaiting_description)
+    states = StateFilter(OrderStates.awaiting_receipt, OrderStates.awaiting_description,
+                         OrderStates.delete_choice, OrderStates.delete_confirm)
     router.message.register(open_delete_orders, Command("deleteorder"))
     router.message.register(open_catalog, F.text.in_(variants("menu_catalog")))
     router.message.register(cancel_order, states, Command("cancel"))
     router.message.register(cancel_order, states, F.text.in_(variants("btn_cancel")))
-    router.message.register(cancel_order, OrderStates.awaiting_receipt, F.text.in_(variants("btn_back")))
+    router.message.register(cancel_order, waiting, F.text.in_(variants("btn_back")))
     router.callback_query.register(cancel_receipt_callback, F.data == "order:cancel")
     router.callback_query.register(select_product, ProductCallback.filter(F.action == "select"))
     router.callback_query.register(page_callback, OrderPageCallback.filter())
@@ -207,4 +259,6 @@ def create_router() -> Router:
     router.callback_query.register(confirm_delete_order, OrderConfirmCallback.filter())
     router.message.register(receive_receipt, OrderStates.awaiting_receipt,
                             F.content_type.in_({ContentType.PHOTO, ContentType.DOCUMENT}))
+    router.message.register(receive_description, OrderStates.awaiting_description,
+                            ~F.text.in_(variants("menu_analytics")))
     return router
