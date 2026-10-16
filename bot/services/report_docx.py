@@ -14,6 +14,8 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.text.run import Run
 from docx.shared import Cm, Pt, RGBColor
 
 from bot.db import Database, order_scope
@@ -183,7 +185,8 @@ def fill_row(row, values: list[str], widths: list[float], *, header=False, align
 
 
 def write_report(snapshot_path: Path, output: Path, period: Period, tz: ZoneInfo, lang: str,
-                 generated_at: datetime, summary: Summary, top: list[TopProduct], png: bytes | None) -> None:
+                 generated_at: datetime, summary: Summary, top: list[TopProduct], png: bytes | None,
+                 bot_username: str | None = None) -> None:
     document = Document()
     configure_document(document, lang, generated_at)
     title = paragraph(document, t("report_title", lang), style="Title", center=True, size=22, bold=True, color=ACCENT)
@@ -227,34 +230,46 @@ def write_report(snapshot_path: Path, output: Path, period: Period, tz: ZoneInfo
         document.inline_shapes[-1]._inline.docPr.set("descr", t("report_chart", lang))
         paragraph(document, t("report_chart", lang), style="Caption", center=True, size=10)
 
-    widths = [1, 3.2, 4, 2.2, 4, 2.6]
-    section = document.sections[-1]
-    available = section.page_width - section.left_margin - section.right_margin
-    if Cm(sum(widths)) > available:
-        section = document.add_section(WD_SECTION_START.NEW_PAGE)
-        section.orientation = WD_ORIENT.LANDSCAPE
-        section.page_width, section.page_height = Cm(29.7), Cm(21)
+    widths = [1, 3, 5, 2.4, 6, 3.5, 1.8]
+    section = document.add_section(WD_SECTION_START.NEW_PAGE)
+    section.orientation = WD_ORIENT.LANDSCAPE
+    section.page_width, section.page_height = Cm(29.7), Cm(21)
     paragraph(document, t("report_orders", lang), style="Heading 1", size=14, bold=True)
     table = make_table(document, [t(key, lang) for key in (
         "report_number", "report_date_column", "report_order_product", "report_amount",
-        "report_description", "report_author")], widths)
+        "report_description", "report_author", "report_receipt")], widths)
     scope, values = order_scope(period.start, period.end)
     # Only display columns, read in batches from the same consistent snapshot.
     with closing(sqlite3.connect(snapshot_path.resolve().as_uri() + "?mode=ro", uri=True)) as connection:
         cursor = connection.execute(
-            f"SELECT product_name, price, created_by_name, created_by, created_at, description FROM orders WHERE {scope} "
+            f"SELECT product_name, price, created_by_name, created_by, created_at, description, id, "
+            f"receipt_file_id, receipt_type FROM orders WHERE {scope} "
             "ORDER BY created_at DESC, id DESC", values)
         index = 0
         while rows := cursor.fetchmany(100):
-            for name, price, author, author_id, created_at, description in rows:
+            for name, price, author, author_id, created_at, description, order_id, receipt_id, receipt_type in rows:
                 index += 1
-                fill_row(table.add_row(), [str(index), format_datetime(datetime.fromisoformat(created_at), lang, tz),
+                row = table.add_row()
+                has_link = bool(bot_username and receipt_id and receipt_type in {"photo", "document"})
+                fill_row(row, [str(index), format_datetime(datetime.fromisoformat(created_at), lang, tz),
                                          name, format_money(price, lang),
                                          (description or "").strip() or t("report_description_empty", lang),
-                                         author or str(author_id)], widths,
+                                         author or str(author_id), "" if has_link else t("report_description_empty", lang)], widths,
                          alignments=[WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.CENTER, WD_ALIGN_PARAGRAPH.LEFT,
-                                     WD_ALIGN_PARAGRAPH.RIGHT, WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.LEFT],
+                                     WD_ALIGN_PARAGRAPH.RIGHT, WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.LEFT,
+                                     WD_ALIGN_PARAGRAPH.CENTER],
                          fill="FFFFFF" if index % 2 else "F5F7FA")
+                if has_link:
+                    link_paragraph = row.cells[-1].paragraphs[0]
+                    relationship = link_paragraph.part.relate_to(
+                        f"https://t.me/{bot_username}?start=r{order_id}", RT.HYPERLINK, is_external=True)
+                    hyperlink = OxmlElement("w:hyperlink")
+                    hyperlink.set(qn("r:id"), relationship)
+                    run = style_run(Run(OxmlElement("w:r"), link_paragraph), color="0563C1")
+                    run.font.underline = True
+                    run.text = t("report_receipt", lang)
+                    hyperlink.append(run._r)
+                    link_paragraph._p.append(hyperlink)
     last_row = table.add_row()
     merged = last_row.cells[0].merge(last_row.cells[-1])
     shade(merged, "EAF1FB")
@@ -267,6 +282,7 @@ def write_report(snapshot_path: Path, output: Path, period: Period, tz: ZoneInfo
 async def create_report(
     database: Database, output: Path, period: Period, tz: ZoneInfo, lang: str,
     generated_at: datetime | None = None,
+    *, bot_username: str | None = None,
 ) -> None:
     generated_at = generated_at if generated_at is not None else datetime.now(timezone.utc)
     lang = normalize_language(lang)
@@ -282,7 +298,7 @@ async def create_report(
                 png = data
         # All matplotlib work stays on the event-loop thread. Word assembly is offloaded.
         task = asyncio.create_task(asyncio.to_thread(
-            write_report, snapshot.path, output, period, tz, lang, generated_at, summary, top, png,
+            write_report, snapshot.path, output, period, tz, lang, generated_at, summary, top, png, bot_username,
         ))
         try:
             await asyncio.shield(task)

@@ -126,7 +126,7 @@ class AnalyticsTests(BotTestCase):
         periods = [PeriodChoiceCallback.unpack(button.callback_data).period for row in keyboard for button in row]
         self.assertEqual(periods, ["t", "d7", "d30", "custom", "all"])
         await self.click(PeriodChoiceCallback(period="d7").pack())
-        actions = self.sent_messages()[-1].reply_markup.inline_keyboard
+        actions = self.displayed_messages()[-1].reply_markup.inline_keyboard
         self.assertEqual([len(row) for row in actions], [2, 1, 1, 1])
         self.assertEqual([AnalyticsPeriodCallback.unpack(b.callback_data).mode for row in actions[:3] for b in row],
                          ["top", "chart", "orders", "word"])
@@ -144,7 +144,7 @@ class AnalyticsTests(BotTestCase):
         page = await self.database.get_orders_page(start=period.start, end=period.end)
         self.assertEqual((page.total, len(page.orders)), (3, 3))
         await self.result("summary", "1")
-        self.assertIn("Заказов: 3\nСумма: 900 сом", self.sent_messages()[-1].text)
+        self.assertIn("Заказов: 3\nСумма: 900 сом", self.displayed_messages()[-1].text)
 
     async def test_every_period_filters_correct_calendar_day(self) -> None:
         # Noon on each local date avoids accidental boundary overlap.
@@ -178,22 +178,22 @@ class AnalyticsTests(BotTestCase):
         top = await self.database.get_top_products(make_period("all", TZ, NOW))
         self.assertEqual([item.name for item in top], ["Машина", "Үй", "Авто", "A", "B", "C"])
         await self.result("top")
-        self.assertIn("1. Машина: 3 раз, 600 сом", self.sent_messages()[-1].text)
-        self.assertIn("5. B: 1 раз, 40 сом", self.sent_messages()[-1].text)
-        self.assertNotIn("Renamed", self.sent_messages()[-1].text)
+        self.assertIn("1. Машина: 3 раз, 600 сом", self.displayed_messages()[-1].text)
+        self.assertIn("5. B: 1 раз, 40 сом", self.displayed_messages()[-1].text)
+        self.assertNotIn("Renamed", self.displayed_messages()[-1].text)
 
     async def test_exact_top_example(self) -> None:
         for _ in range(15):
             await self.order()
         await self.result("top")
-        self.assertIn("1. Машина: 15 раз, 3 000 сом", self.sent_messages()[-1].text)
+        self.assertIn("1. Машина: 15 раз, 3 000 сом", self.displayed_messages()[-1].text)
 
     async def test_all_empty_views_send_only_localized_no_orders(self) -> None:
         for user_id, lang in ((101, "ru"), (202, "ky")):
             for mode in ("summary", "top", "chart", "orders"):
                 self.session.calls.clear()
                 await self.result(mode, "7", user_id)
-                self.assertIn(t("no_orders", lang), self.sent_messages()[-1].text)
+                self.assertIn(t("no_orders", lang), self.displayed_messages()[-1].text)
                 self.assertFalse(any(isinstance(call, (SendPhoto, SendDocument)) for call in self.session.calls))
 
     async def test_daily_and_weekly_aggregation_use_local_days_not_utc(self) -> None:
@@ -299,7 +299,7 @@ class AnalyticsTests(BotTestCase):
         self.dispatcher = create_dispatcher(config, self.database)
         await self.order(when=datetime(2026, 10, 12, 19, tzinfo=timezone.utc))
         await self.result("summary", "1")
-        self.assertIn(t("no_orders", "ru"), self.sent_messages()[-1].text)
+        self.assertIn(t("no_orders", "ru"), self.displayed_messages()[-1].text)
         await self.result("orders", "all")
         self.assertTrue(any("19:00 · 12.10.2026" in m.text for m in self.sent_messages()))
 

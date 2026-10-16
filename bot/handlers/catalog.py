@@ -18,6 +18,7 @@ from bot.keyboards import (
     main_menu_keyboard, product_keyboard,
 )
 from bot.services.catalog import validate_name, validate_price
+from bot.services.messages import edit_message
 
 
 class CatalogStates(StatesGroup):
@@ -113,7 +114,12 @@ async def product_action(
         state, CatalogStates.delete_confirm if is_delete else CatalogStates.edit_choice, product.id,
     )
     text = t("confirm_product_delete", lang, card=product_card(product, lang), question=t("confirm_delete", lang)) if is_delete else t("edit_field", lang)
-    await callback.message.answer(text, reply_markup=catalog_form_keyboard(lang, token, confirm_delete=is_delete))
+    keyboard = catalog_form_keyboard(lang, token, confirm_delete=is_delete)
+    if is_delete:
+        message_id = await edit_message(callback.message, text, keyboard)
+        await state.update_data(message_id=message_id)
+    else:
+        await callback.message.answer(text, reply_markup=keyboard)
 
 
 async def cancelled(message: Message, database: Database, state: FSMContext, lang: str) -> None:
@@ -163,11 +169,14 @@ async def form_action(
     if not step or data.get("token") != callback_data.token:
         await callback.answer(t("form_expired", lang), show_alert=True)
         return
+    if step == CatalogStates.delete_confirm.state and data.get("message_id") != callback.message.message_id:
+        await callback.answer(t("form_expired", lang), show_alert=True)
+        return
     action = callback_data.action
     if step == CatalogStates.delete_confirm.state and action in {"no", "cancel"}:
         await callback.answer()
         await state.clear()
-        await callback.message.edit_text(t("delete_cancelled", lang), reply_markup=None)
+        await edit_message(callback.message, t("delete_cancelled", lang))
         await show_catalog_editor(callback.message, database, lang)
         return
     if action == "cancel":

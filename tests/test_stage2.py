@@ -86,7 +86,7 @@ class CatalogTests(BotTestCase):
                 product_id = await self.database.add_product("Машина <&>", 200)
                 before = await self.database.get_active_product(product_id)
                 await self.action("delete", product_id, user_id)
-                confirmation = self.sent_messages()[-1]
+                confirmation = self.displayed_messages()[-1]
                 self.assertIn(t("confirm_delete", lang), confirmation.text)
                 self.assertIn("Машина &lt;&amp;&gt;", confirmation.text)
                 rows = confirmation.reply_markup.inline_keyboard
@@ -273,7 +273,7 @@ class CatalogTests(BotTestCase):
     async def test_select_waits_for_receipt_and_cancel_creates_no_orders(self) -> None:
         product_id = await self.database.add_product("Машина", 200)
         await self.action("select", product_id)
-        self.assertEqual(self.sent_messages()[-1].text, t("ask_receipt", "ru", name="Машина", price="200 сом"))
+        self.assertEqual(self.displayed_messages()[-1].text, t("ask_receipt", "ru", name="Машина", price="200 сом"))
         await self.send_message("/cancel")
         await self.send_message(None, photo=[PhotoSize(file_id="photo", file_unique_id="unique", width=10, height=10)])
         async with aiosqlite.connect(self.path) as connection:

@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 import os
+import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from aiogram.utils.token import TokenValidationError, validate_token
@@ -26,6 +27,7 @@ class Config:
     timezone: ZoneInfo
     default_lang: str = "ky"
     access_denied_reply: bool = False
+    bot_username: str | None = None
 
 
 def load_config(env_file: Path | None = None) -> Config:
@@ -74,6 +76,10 @@ def load_config(env_file: Path | None = None) -> Config:
     if raw_reply not in {"true", "false"}:
         raise ConfigError("ACCESS_DENIED_REPLY must be true or false.")
 
+    username = os.getenv("BOT_USERNAME", "").strip().removeprefix("@") or None
+    if username is not None and re.fullmatch(r"[A-Za-z0-9_]{5,32}", username) is None:
+        raise ConfigError("BOT_USERNAME must be a Telegram username (5–32 letters, digits or underscores).")
+
     return Config(
         bot_token=token,
         allowed_user_ids=allowed_ids,
@@ -81,4 +87,5 @@ def load_config(env_file: Path | None = None) -> Config:
         timezone=timezone,
         default_lang=default_lang,
         access_denied_reply=raw_reply == "true",
+        bot_username=username,
     )

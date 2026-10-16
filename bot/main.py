@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import sys
+from dataclasses import replace
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -22,6 +23,7 @@ from bot.handlers.start import create_fallback_router, create_router
 from bot.i18n import SUPPORTED_LANGUAGES, t
 from bot.middlewares import WhitelistMiddleware
 from bot.services.polling import StopOnPollingConflict, log_polling_conflict
+from bot.services.messages import RestoreOrderCardMiddleware
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +43,8 @@ def create_dispatcher(config: Config, database: Database) -> Dispatcher:
     middleware = WhitelistMiddleware(config, database)
     dispatcher.message.outer_middleware(middleware)
     dispatcher.callback_query.outer_middleware(middleware)
+    dispatcher.message.middleware(RestoreOrderCardMiddleware())
+    dispatcher.callback_query.middleware(RestoreOrderCardMiddleware())
     # Global navigation must run before FSM text handlers and the final deletion fallback.
     dispatcher.message.register(open_catalog_editor, Command("edit"))
     dispatcher.include_routers(
@@ -70,13 +74,18 @@ async def main() -> None:
     config = load_config()
     await init_db(config.db_path)
     database = Database(config.db_path)
-    dispatcher = create_dispatcher(config, database)
 
     if not config.allowed_user_ids:
         logger.info("Whitelist is empty. Only /myid is available until IDs are added and the bot is restarted.")
     logger.info("Database initialized: %s; timezone: %s", config.db_path, config.timezone.key)
 
     async with Bot(token=config.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)) as bot:
+        if not config.bot_username:
+            username = (await bot.get_me()).username
+            if not username:
+                raise ConfigError("Telegram did not return the bot username. Set BOT_USERNAME in .env.")
+            config = replace(config, bot_username=username)
+        dispatcher = create_dispatcher(config, database)
         bot.session.middleware.register(StopOnPollingConflict(dispatcher))
         await bot.delete_webhook(drop_pending_updates=False)
         await register_commands(bot, "ky")

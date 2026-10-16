@@ -78,8 +78,8 @@ class OrderTests(BotTestCase):
 
     async def test_select_then_photo_records_metadata_and_returns_catalog(self) -> None:
         await self.select()
-        self.assertEqual(self.sent_messages()[-1].text, t("ask_receipt", "ru", name="Машина", price="200 сом"))
-        self.assertEqual(self.sent_messages()[-1].reply_markup.inline_keyboard[0][0].text, "❌ Назад")
+        self.assertEqual(self.displayed_messages()[-1].text, t("ask_receipt", "ru", name="Машина", price="200 сом"))
+        self.assertEqual(self.displayed_messages()[-1].reply_markup.inline_keyboard[0][0].text, "❌ Назад")
         self.assertEqual(await self.all_rows(), [])
         await self.send_message(None, photo=PHOTOS, caption="Payment")
         rows = await self.all_rows()
@@ -98,8 +98,8 @@ class OrderTests(BotTestCase):
 
     async def test_document_and_kyrgyz_prompts(self) -> None:
         await self.select(202)
-        self.assertEqual(self.sent_messages()[-1].text, t("ask_receipt", "ky", name="Машина", price="200 сом"))
-        self.assertEqual(self.sent_messages()[-1].reply_markup.inline_keyboard[0][0].text, "❌ Артка")
+        self.assertEqual(self.displayed_messages()[-1].text, t("ask_receipt", "ky", name="Машина", price="200 сом"))
+        self.assertEqual(self.displayed_messages()[-1].reply_markup.inline_keyboard[0][0].text, "❌ Артка")
         await self.send_message(None, 202, document=DOCUMENT, caption="Fixture description")
         row = (await self.all_rows())[0]
         self.assertEqual((row["receipt_type"], row["receipt_file_id"], row["receipt_file_unique_id"], row["receipt_file_name"]), ("document", "pdf", "pdf-unique", "receipt.pdf"))

@@ -1,10 +1,8 @@
 """Period-first analytics with restart-safe callbacks and localized order cards."""
 
-import logging
 from html import escape
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -18,7 +16,7 @@ from bot.config import Config
 from bot.db import Database
 from bot.handlers.catalog import usable_callback
 from bot.handlers.start import show_language_picker
-from bot.handlers.orders import order_card, receipt_caption
+from bot.handlers.orders import order_card, deliver_receipt
 from bot.handlers.export import send_word_report
 from bot.i18n import format_money, t, variants
 from bot.keyboards import (
@@ -26,13 +24,11 @@ from bot.keyboards import (
     analytics_period_keyboard, main_menu_keyboard, receipt_button,
 )
 from bot.services.charts import chart_png
+from bot.services.messages import edit_message, edit_or_send
 from bot.services.stats import (
     Period, chart_weekly, fill_chart_buckets, make_period, period_from_anchor,
     period_key, period_label, validate_days,
 )
-
-logger = logging.getLogger(__name__)
-
 
 class AnalyticsStates(StatesGroup):
     custom_days = State()
@@ -50,7 +46,8 @@ async def analytics_menu_callback(callback: CallbackQuery, state: FSMContext, la
     if not await usable_callback(callback, lang, language_selected):
         return
     await callback.answer()
-    await show_analytics_menu(callback.message, state, lang, language_selected)
+    await state.clear()
+    await edit_message(callback.message, t("choose_period", lang), analytics_period_keyboard("summary", lang))
 
 
 async def choose_period(callback: CallbackQuery, callback_data: AnalyticsKindCallback,
@@ -59,13 +56,20 @@ async def choose_period(callback: CallbackQuery, callback_data: AnalyticsKindCal
     await analytics_menu_callback(callback, state, lang, language_selected)
 
 
-async def show_summary(message: Message, database: Database, period: Period, lang: str) -> None:
+async def show_summary(message: Message, database: Database, period: Period, lang: str,
+                       *, editing: bool = False, target: tuple[int, int] | None = None) -> None:
     summary = await database.get_order_summary(period)
     text = t("summary_result", lang, period=period_label(period.key, lang),
              count=summary.count, total=format_money(summary.total, lang))
     if not summary.count:
         text += "\n" + t("no_orders", lang)
-    await message.answer(text, reply_markup=analytics_keyboard(lang, period))
+    keyboard = analytics_keyboard(lang, period)
+    if target:
+        await edit_or_send(message.bot, *target, text, keyboard)
+    elif editing:
+        await edit_message(message, text, keyboard)
+    else:
+        await message.answer(text, reply_markup=keyboard)
 
 
 async def select_period(callback: CallbackQuery, callback_data: PeriodChoiceCallback,
@@ -77,9 +81,10 @@ async def select_period(callback: CallbackQuery, callback_data: PeriodChoiceCall
     await callback.answer()
     if callback_data.period == "custom":
         await state.set_state(AnalyticsStates.custom_days)
-        await callback.message.answer(t("ask_days", lang))
+        message_id = await edit_message(callback.message, t("ask_days", lang))
+        await state.set_data({"period_chat_id": callback.message.chat.id, "period_message_id": message_id})
         return
-    await show_summary(callback.message, database, make_period(period_key(callback_data.period), config.timezone), lang)
+    await show_summary(callback.message, database, make_period(period_key(callback_data.period), config.timezone), lang, editing=True)
 
 
 async def custom_days(message: Message, database: Database, config: Config,
@@ -89,8 +94,10 @@ async def custom_days(message: Message, database: Database, config: Config,
     except ValueError:
         await message.answer(t("ask_days", lang))
         return
+    data = await state.get_data()
+    target = ((data["period_chat_id"], data["period_message_id"]) if "period_message_id" in data else None)
     await state.clear()
-    await show_summary(message, database, make_period(key, config.timezone), lang)
+    await show_summary(message, database, make_period(key, config.timezone), lang, target=target)
 
 
 async def cancel_custom_days(message: Message, state: FSMContext, lang: str) -> None:
@@ -131,7 +138,7 @@ async def show_result(callback: CallbackQuery, callback_data: AnalyticsPeriodCal
     message = callback.message
     mode = callback_data.mode
     if mode == "summary":
-        await show_summary(message, database, period, lang)
+        await show_summary(message, database, period, lang, editing=True)
         return
     if mode == "word":
         await send_word_report(message, database, config, period, lang)
@@ -197,15 +204,7 @@ async def send_receipt(callback: CallbackQuery, callback_data: ReceiptCallback, 
         await callback.answer(t("receipt_unavailable", lang), show_alert=True)
         return
     await callback.answer()
-    caption = receipt_caption(order, config, lang)
-    try:
-        if order.receipt_type == "photo":
-            await callback.message.answer_photo(order.receipt_file_id, caption=caption)
-        else:
-            await callback.message.answer_document(order.receipt_file_id, caption=caption)
-    except TelegramBadRequest:
-        logger.exception("Telegram receipt delivery failed for order_id=%s", order.id)
-        await callback.message.answer(t("receipt_unavailable", lang))
+    await deliver_receipt(callback.message, order, config, lang)
 
 
 def create_router() -> Router:

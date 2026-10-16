@@ -257,6 +257,14 @@ class Database:
                 row = await cursor.fetchone()
                 return Order.from_row(row) if row is not None else None
 
+    async def get_order_for_receipt_link(self, order_id: int) -> Order | None:
+        """Only for deep links: distinguish a deleted order without delivering its receipt."""
+        async with aiosqlite.connect(self.path, timeout=10) as connection:
+            connection.row_factory = aiosqlite.Row
+            async with connection.execute("SELECT * FROM orders WHERE id = ?", (order_id,)) as cursor:
+                row = await cursor.fetchone()
+                return Order.from_row(row) if row is not None else None
+
     async def get_orders_page(
         self, page: int = 0, *, start: datetime | None = None, end: datetime | None = None,
     ) -> OrderPage:

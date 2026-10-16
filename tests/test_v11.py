@@ -156,7 +156,7 @@ class UIv11Tests(BotTestCase):
             for days in ("1", "99"):
                 await self.send_message(days, user_id)
                 self.assertIsNone(await self.state(user_id).get_state())
-                keyboard = self.sent_messages()[-1].reply_markup.inline_keyboard
+                keyboard = self.displayed_messages()[-1].reply_markup.inline_keyboard
                 data = AnalyticsPeriodCallback.unpack(keyboard[0][0].callback_data)
                 self.assertEqual(data.period, "t" if days == "1" else "d99")
                 await self.click(PeriodChoiceCallback(period="custom").pack(), user_id)
@@ -169,7 +169,7 @@ class UIv11Tests(BotTestCase):
         await self.order()
         with patch("bot.handlers.analytics.make_period", side_effect=lambda key, tz: make_period(key, tz, NOW)):
             await self.click(PeriodChoiceCallback(period="d7").pack())
-        rows = self.sent_messages()[-1].reply_markup.inline_keyboard
+        rows = self.displayed_messages()[-1].reply_markup.inline_keyboard
         actions = [button.callback_data for row in rows[:3] for button in row]
         for data in actions:
             payload = AnalyticsPeriodCallback.unpack(data)
@@ -192,7 +192,7 @@ class UIv11Tests(BotTestCase):
         self.assertEqual(self.sent_messages()[0].text, f"<b>{escape(name)} — 200 сом</b>")
         self.assertEqual(self.bot.default.parse_mode, "HTML")
         await self.click(ProductCallback(action="select", product_id=self.product_id).pack())
-        self.assertIn(escape(name), self.sent_messages()[-1].text)
+        self.assertIn(escape(name), self.displayed_messages()[-1].text)
         await self.send_message("/cancel")
         await self.order(name, author)
         for data in (AnalyticsPeriodCallback(mode="top", period="all").pack(), AnalyticsPeriodCallback(mode="orders", period="all").pack()):
@@ -263,7 +263,7 @@ class UIv11Tests(BotTestCase):
     async def test_empty_views_keep_change_period_button(self):
         for mode in ("summary", "top", "chart", "orders"):
             await self.click(AnalyticsPeriodCallback(mode=mode, period="all").pack(), 202)
-            result = self.sent_messages()[-1]
+            result = self.displayed_messages()[-1]
             self.assertIn("Бул убакытта заказ жок", result.text)
             self.assertEqual(result.reply_markup.inline_keyboard[-1][0].text, "🔄 Убакытты өзгөртүү")
 
@@ -280,7 +280,7 @@ class UIv11Tests(BotTestCase):
         self.assertNotIn("Asia/Bishkek", "\n".join(p.text for p in document.paragraphs))
         self.assertEqual(len(document.tables), 3)
         self.assertEqual([round(column.width / Cm(1), 1) for column in document.tables[1].columns], [1.2, 9.8, 2.5, 3.5])
-        self.assertEqual([round(column.width / Cm(1), 1) for column in document.tables[2].columns], [1.0, 3.2, 4.0, 2.2, 4.0, 2.6])
+        self.assertEqual([round(column.width / Cm(1), 1) for column in document.tables[2].columns], [1.0, 3.0, 5.0, 2.4, 6.0, 3.5, 1.8])
         self.assertEqual(document.tables[2].rows[-1].cells[0].text, "Жалпы: 400 сом")
         ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main", "a": "http://schemas.openxmlformats.org/drawingml/2006/main", "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
         with ZipFile(path) as archive:

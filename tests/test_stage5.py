@@ -61,7 +61,7 @@ class ExportTests(BotTestCase):
         await self.send_message(t("menu_analytics", "ru"))
         self.assertEqual(self.sent_messages()[-1].text, t("choose_period", "ru"))
         await self.click(PeriodChoiceCallback(period="d7").pack())
-        keyboard = self.sent_messages()[-1].reply_markup.inline_keyboard
+        keyboard = self.displayed_messages()[-1].reply_markup.inline_keyboard
         button = keyboard[2][0]
         self.assertEqual(button.text, "📄 Word")
         payload = AnalyticsPeriodCallback.unpack(button.callback_data)
@@ -87,7 +87,7 @@ class ExportTests(BotTestCase):
         totals, top, orders = document.tables
         self.assertEqual([cell.text for cell in top.rows[1].cells], ["1", "Машина", "2", "400 сом"])
         self.assertEqual(len(orders.rows), 5)
-        self.assertEqual([cell.text for cell in orders.rows[1].cells], ["1", "12:00 · 13.10.2026", "Үй", "300 сом", "Fixture description", "Author 101"])
+        self.assertEqual([cell.text for cell in orders.rows[1].cells], ["1", "12:00 · 13.10.2026", "Үй", "300 сом", "Fixture description", "Author 101", "—"])
         self.assertEqual(len(document.inline_shapes), 1)
         self.assertNotIn("New catalog name", text)
         with ZipFile(BytesIO(data)) as archive:

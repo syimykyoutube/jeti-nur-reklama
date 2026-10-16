@@ -107,6 +107,9 @@ class BotTestCase(unittest.IsolatedAsyncioTestCase):
     def sent_messages(self) -> list[SendMessage]:
         return [call for call in self.session.calls if isinstance(call, SendMessage)]
 
+    def displayed_messages(self):
+        return [call for call in self.session.calls if isinstance(call, (SendMessage, EditMessageText))]
+
 
 class StageOneTests(BotTestCase):
     async def test_schema_is_idempotent_and_empty(self) -> None:

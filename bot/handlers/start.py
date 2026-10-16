@@ -2,12 +2,19 @@
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
+from aiogram.filters.command import CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from bot.db import Database
+from bot.config import Config
+import re
 from bot.i18n import SUPPORTED_LANGUAGES, t
 from bot.keyboards import language_keyboard, main_menu_keyboard, receipt_keyboard
+from bot.services.messages import restore_order_card
+
+
+RECEIPT_PAYLOAD = re.compile(r"^r\d{1,9}$", re.ASCII)
 
 
 async def show_language_picker(message: Message, lang: str, include_menu: bool = False) -> None:
@@ -23,11 +30,23 @@ async def my_id(message: Message, lang: str) -> None:
         await message.answer(t("my_id", lang, user_id=message.from_user.id))
 
 
-async def start(message: Message, lang: str, language_selected: bool, state: FSMContext) -> None:
-    from bot.handlers.orders import OrderStates
+async def start(message: Message, lang: str, language_selected: bool, state: FSMContext,
+                command: CommandObject, database: Database, config: Config) -> None:
+    from bot.handlers.orders import OrderStates, deliver_receipt
+    if command.command == "start":
+        await restore_order_card(message.bot, await state.get_data(), lang)
+    if command.command == "start" and command.args and RECEIPT_PAYLOAD.fullmatch(command.args):
+        order = await database.get_order_for_receipt_link(int(command.args[1:]))
+        if order is None:
+            await message.answer(t("receipt_order_not_found", lang))
+        elif order.deleted_at is not None:
+            await message.answer(t("receipt_order_deleted", lang))
+        else:
+            await deliver_receipt(message, order, config, lang)
+        await show_main_menu(message, lang)
+        return
     current = await state.get_state()
-    command = (message.text or "").split(maxsplit=1)[0].split("@")[0]
-    if command == "/start" and current in {OrderStates.awaiting_receipt.state, OrderStates.awaiting_description.state}:
+    if command.command == "start" and current in {OrderStates.awaiting_receipt.state, OrderStates.awaiting_description.state}:
         key = "receipt_wrong" if current == OrderStates.awaiting_receipt.state else "ask_description"
         await message.answer(t(key, lang), reply_markup=receipt_keyboard(lang))
         return

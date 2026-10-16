@@ -2,10 +2,12 @@
 
 from datetime import datetime
 from html import escape, unescape
+import logging
 from uuid import uuid4
 
 from aiogram import F, Router
 from aiogram.enums import ContentType
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -20,6 +22,7 @@ from bot.handlers.catalog import open_catalog, show_catalog, usable_callback
 from bot.handlers.start import show_language_picker, delete_unexpected_message
 from bot.i18n import format_datetime, format_money, t, variants
 from bot.services.orders import validate_description
+from bot.services.messages import edit_message
 from bot.keyboards import (
     confirm_order_keyboard, delete_orders_keyboard, delete_order_button, main_menu_keyboard, receipt_keyboard,
 )
@@ -70,15 +73,30 @@ async def select_product(
     if product is None:
         await callback.answer(t("product_unavailable", lang), show_alert=True)
         return
+    await callback.answer()
+    message_id = await edit_message(callback.message,
+        t("ask_receipt", lang, name=escape(product.name), price=format_money(product.price, lang)),
+        receipt_keyboard(lang))
     await state.clear()
     # Quote the current product once; a later catalog edit must not change it.
-    await state.set_data({"product_id": product.id, "product_name": product.name, "price": product.price})
+    await state.set_data({"product_id": product.id, "product_name": product.name, "price": product.price,
+                          "card_chat_id": callback.message.chat.id, "card_message_id": message_id, "card_lang": lang})
     await state.set_state(OrderStates.awaiting_receipt)
-    await callback.answer()
-    await callback.message.answer(
-        t("ask_receipt", lang, name=escape(product.name), price=format_money(product.price, lang)),
-        reply_markup=receipt_keyboard(lang),
-    )
+
+
+async def deliver_receipt(message: Message, order: Order, config: Config, lang: str) -> None:
+    if not order.receipt_file_id or order.receipt_type not in {"photo", "document"}:
+        await message.answer(t("receipt_unavailable", lang))
+        return
+    try:
+        caption = receipt_caption(order, config, lang)
+        if order.receipt_type == "photo":
+            await message.answer_photo(order.receipt_file_id, caption=caption)
+        else:
+            await message.answer_document(order.receipt_file_id, caption=caption)
+    except TelegramBadRequest:
+        logging.getLogger(__name__).exception("Telegram receipt delivery failed for order_id=%s", order.id)
+        await message.answer(t("receipt_unavailable", lang))
 
 
 async def receive_receipt(message: Message, database: Database, state: FSMContext, lang: str) -> None:
@@ -189,10 +207,11 @@ async def choose_delete_order(
                           "message_id": callback.message.message_id})
     await state.set_state(OrderStates.delete_confirm)
     await callback.answer()
-    await callback.message.edit_text(
+    message_id = await edit_message(callback.message,
         t("confirm_delete", lang),
-        reply_markup=confirm_order_keyboard(lang, token),
+        confirm_order_keyboard(lang, token),
     )
+    await state.update_data(message_id=message_id)
 
 
 async def confirm_delete_order(
@@ -213,11 +232,11 @@ async def confirm_delete_order(
     await callback.answer()
     if callback_data.action == "no":
         await state.clear()
-        await callback.message.edit_text(t("delete_cancelled", lang), reply_markup=None)
+        await edit_message(callback.message, t("delete_cancelled", lang))
         return
     if callback_data.action == "yes":
         changed = await database.soft_delete_order(data["order_id"], callback.from_user.id)
-        await callback.message.edit_text(t("order_deleted" if changed else "order_unavailable", lang))
+        await edit_message(callback.message, t("order_deleted" if changed else "order_unavailable", lang))
     await state.clear()
 
 

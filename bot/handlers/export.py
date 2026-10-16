@@ -24,7 +24,8 @@ async def send_word_report(message: Message, database: Database, config: Config,
         filename = report_filename(period, config.timezone, generated_at)
         output = Path(directory) / filename
         try:
-            await create_report(database, output, period, config.timezone, lang, generated_at)
+            await create_report(database, output, period, config.timezone, lang, generated_at,
+                                bot_username=config.bot_username)
             await message.answer_document(FSInputFile(output, filename=filename))
         except Exception:
             logging.exception("Word report generation or delivery failed")

@@ -111,8 +111,8 @@ class DescriptionFlowTests(BotTestCase):
     async def test_photo_and_document_captions_save_trimmed_description_in_both_languages(self):
         for user_id, lang, media in ((101, "ru", {"photo": PHOTOS}), (202, "ky", {"document": DOCUMENT})):
             await self.select(user_id)
-            self.assertIn("описание", self.sent_messages()[-1].text)
-            self.assertEqual(self.sent_messages()[-1].reply_markup.inline_keyboard[0][0].text, t("btn_back", lang))
+            self.assertIn("описание", self.displayed_messages()[-1].text.lower())
+            self.assertEqual(self.displayed_messages()[-1].reply_markup.inline_keyboard[0][0].text, t("btn_back", lang))
             await self.send_message(None, user_id, caption="  Торговый центр <A> & Б  ", **media)
             order = (await self.rows())[0]
             self.assertEqual(order.description, "Торговый центр <A> & Б")
@@ -390,11 +390,11 @@ class DescriptionDisplayTests(BotTestCase):
             self.assertEqual(len(top.rows), 17)  # 15 products plus one legacy product and header.
             self.assertEqual(len(orders.rows), 18)  # 16 orders, header and total.
             self.assertEqual([c.text for c in orders.rows[0].cells], [t(key, lang) for key in (
-                "report_number", "report_date_column", "report_order_product", "report_amount", "report_description", "report_author")])
+                "report_number", "report_date_column", "report_order_product", "report_amount", "report_description", "report_author", "report_receipt")])
             self.assertEqual(orders.rows[1].cells[4].text, "—")
             self.assertIn("Источник <&>", orders.rows[2].cells[4].text)
             self.assertEqual(orders.rows[2].cells[5].text, "Автор & <>")
-            self.assertEqual([round(column.width / Cm(1), 1) for column in orders.columns], [1, 3.2, 4, 2.2, 4, 2.6])
+            self.assertEqual([round(column.width / Cm(1), 1) for column in orders.columns], [1, 3, 5, 2.4, 6, 3.5, 1.8])
             section = document.sections[-1]
             self.assertLessEqual(sum(column.width for column in orders.columns), section.page_width - section.left_margin - section.right_margin)
             for table in (top, orders):
